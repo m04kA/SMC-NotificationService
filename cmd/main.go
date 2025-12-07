@@ -44,7 +44,7 @@ func main() {
 	}
 
 	// Инициализируем логгер
-	log, err := logger.New(cfg.Logs.File)
+	log, err := logger.New(cfg.Logs.File, cfg.Logs.Level)
 	if err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		os.Exit(1)
