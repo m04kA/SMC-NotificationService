@@ -1,0 +1,860 @@
+openapi: 3.0.3
+info:
+  title: Booking Service API
+  description: Сервис бронирования времени и услуг для платформы онлайн-записи на автомойку
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8083/api/v1
+    description: Development server
+
+# ============================================================
+# ENDPOINTS
+# ============================================================
+
+paths:
+  # ------------------------------------------------------------
+  # БРОНИРОВАНИЯ - Пользовательские endpoints
+  # ------------------------------------------------------------
+
+  /bookings:
+    post:
+      summary: "Создать бронирование"
+      description: |
+        Создание нового бронирования. Автоматически использует выбранный автомобиль пользователя из UserService.
+        Получает данные о компании и услуге из SellerService для валидации и денормализации.
+      operationId: createBooking
+      tags:
+        - Bookings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBookingRequest'
+      responses:
+        '201':
+          description: "Бронирование успешно создано"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          description: "Компания, услуга или автомобиль не найдены"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          $ref: '#/components/responses/SlotNotAvailable'
+
+  /bookings/{bookingId}:
+    parameters:
+      - $ref: '#/components/parameters/BookingIdParam'
+
+    get:
+      summary: "Получить бронирование по ID"
+      description: "Получение информации о конкретном бронировании."
+      operationId: getBooking
+      tags:
+        - Bookings
+      parameters:
+        - $ref: '#/components/parameters/XUserIdHeader'
+      responses:
+        '200':
+          description: "Данные бронирования"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /bookings/{bookingId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/BookingIdParam'
+
+    patch:
+      summary: "Отменить бронирование"
+      description: "Отмена бронирования пользователем."
+      operationId: cancelBooking
+      tags:
+        - Bookings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelBookingRequest'
+      responses:
+        '200':
+          description: "Бронирование успешно отменено"
+        '400':
+          description: "Невозможно отменить бронирование (например, уже выполнено)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/{userId}/bookings:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+        description: "Telegram ID пользователя"
+
+    get:
+      summary: "Получить список бронирований пользователя"
+      description: "Получение всех бронирований пользователя. Можно фильтровать по статусу."
+      operationId: getUserBookings
+      tags:
+        - Bookings
+      parameters:
+        - name: status
+          in: query
+          description: "Фильтр по статусу"
+          schema:
+            $ref: '#/components/schemas/BookingStatus'
+      responses:
+        '200':
+          description: "Список бронирований пользователя"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Booking'
+
+  # ------------------------------------------------------------
+  # СВОБОДНЫЕ СЛОТЫ
+  # ------------------------------------------------------------
+
+  /companies/{companyId}/addresses/{addressId}/available-slots:
+    parameters:
+      - $ref: '#/components/parameters/CompanyIdParam'
+      - $ref: '#/components/parameters/AddressIdParam'
+
+    get:
+      summary: "Получить свободные слоты для бронирования на конкретном адресе"
+      description: |
+        Получение списка доступных временных слотов для конкретной услуги, адреса и даты.
+        Показывает количество свободных мест для каждого слота (для автомоек с несколькими боксами).
+        Публичный endpoint.
+      operationId: getAvailableSlots
+      tags:
+        - Slots
+      parameters:
+        - name: serviceId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: "ID услуги"
+          example: 456
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: "Дата для проверки доступности"
+          example: "2025-10-15"
+      responses:
+        '200':
+          description: "Список доступных слотов"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableSlotsResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          description: "Компания, адрес или услуга не найдены"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ------------------------------------------------------------
+  # БРОНИРОВАНИЯ КОМПАНИИ - Для менеджеров
+  # ------------------------------------------------------------
+
+  /companies/{companyId}/bookings:
+    parameters:
+      - $ref: '#/components/parameters/CompanyIdParam'
+
+    get:
+      summary: "Получить список бронирований компании"
+      description: |
+        Получение списка всех бронирований компании.
+        Можно фильтровать по адресу, статусу и дате.
+        Требует X-User-ID header для проверки прав менеджера.
+      operationId: getCompanyBookings
+      tags:
+        - Company Bookings
+      parameters:
+        - $ref: '#/components/parameters/XUserIdHeader'
+        - name: addressId
+          in: query
+          description: "Фильтр по адресу (опционально)"
+          schema:
+            type: integer
+            format: int64
+          example: 100
+        - name: status
+          in: query
+          description: "Фильтр по статусу"
+          schema:
+            $ref: '#/components/schemas/BookingStatus'
+        - name: date
+          in: query
+          description: "Фильтр по дате"
+          schema:
+            type: string
+            format: date
+          example: "2025-10-15"
+        - name: includeInactive
+          in: query
+          description: "Включить неактивные (отменённые, пропущенные) бронирования"
+          schema:
+            type: boolean
+            default: false
+          example: true
+      responses:
+        '200':
+          description: "Список бронирований компании"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Booking'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ------------------------------------------------------------
+  # КОНФИГУРАЦИЯ КОМПАНИИ
+  # ------------------------------------------------------------
+
+  /companies/{companyId}/config:
+    parameters:
+      - $ref: '#/components/parameters/CompanyIdParam'
+
+    get:
+      summary: "Получить конфигурацию слотов компании"
+      description: |
+        Получение настроек бронирования для компании (количество боксов, шаг слотов, ограничения).
+        Поддерживает иерархию конфигураций: услуга на адресе > адрес > компания > дефолты.
+        Публичный endpoint.
+      operationId: getCompanyConfig
+      tags:
+        - Company Config
+      parameters:
+        - name: addressId
+          in: query
+          description: "ID адреса для получения специфичной конфигурации (опционально)"
+          schema:
+            type: integer
+            format: int64
+          example: 100
+        - name: serviceId
+          in: query
+          description: "ID услуги для получения специфичной конфигурации (опционально)"
+          schema:
+            type: integer
+            format: int64
+          example: 456
+      responses:
+        '200':
+          description: "Конфигурация компании"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyConfig'
+        '404':
+          description: "Конфигурация не найдена (используются дефолтные значения)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: "Обновить конфигурацию слотов компании"
+      description: |
+        Обновление настроек бронирования.
+        Доступно только менеджерам компании.
+      operationId: updateCompanyConfig
+      tags:
+        - Company Config
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: "Telegram ID пользователя (для проверки прав менеджера)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCompanyConfigRequest'
+      responses:
+        '200':
+          description: "Конфигурация успешно обновлена"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyConfig'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ------------------------------------------------------------
+  # HEALTH CHECK
+  # ------------------------------------------------------------
+
+  /health:
+    get:
+      summary: "Health check endpoint"
+      description: "Проверка работоспособности сервиса"
+      operationId: healthCheck
+      tags:
+        - System
+      responses:
+        '200':
+          description: "Сервис работает"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  timestamp:
+                    type: string
+                    format: date-time
+
+# ============================================================
+# COMPONENTS
+# ============================================================
+
+components:
+  # ============================================================
+  # ПАРАМЕТРЫ
+  # ============================================================
+
+  parameters:
+    BookingIdParam:
+      name: bookingId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: "ID бронирования"
+      example: 12345
+
+    CompanyIdParam:
+      name: companyId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: "ID компании"
+      example: 123
+
+    AddressIdParam:
+      name: addressId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: "ID адреса компании"
+      example: 100
+
+    XUserIdHeader:
+      name: X-User-ID
+      in: header
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: "Telegram ID текущего пользователя"
+      example: 987654321
+
+  # ============================================================
+  # ПЕРЕИСПОЛЬЗУЕМЫЕ ОТВЕТЫ
+  # ============================================================
+
+  responses:
+    Forbidden:
+      description: "Доступ запрещен"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: "FORBIDDEN"
+            message: "You do not have permission to perform this action"
+
+    NotFound:
+      description: "Ресурс не найден"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: "NOT_FOUND"
+            message: "Resource not found"
+
+    ValidationError:
+      description: "Ошибка валидации"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: "VALIDATION_ERROR"
+            message: "Invalid request data"
+
+    SlotNotAvailable:
+      description: "Слот недоступен для бронирования"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: "SLOT_NOT_AVAILABLE"
+            message: "Selected time slot is not available"
+
+  # ============================================================
+  # СХЕМЫ ДАННЫХ
+  # ============================================================
+
+  schemas:
+    # ------------------------------------------------------------
+    # ОСНОВНЫЕ МОДЕЛИ ДАННЫХ
+    # ------------------------------------------------------------
+
+    Booking:
+      type: object
+      required:
+        - id
+        - userId
+        - companyId
+        - addressId
+        - serviceId
+        - carId
+        - bookingDate
+        - startTime
+        - durationMinutes
+        - status
+        - serviceName
+        - servicePrice
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12345
+          readOnly: true
+        userId:
+          type: integer
+          format: int64
+          description: "Telegram ID пользователя из UserService"
+          example: 987654321
+        companyId:
+          type: integer
+          format: int64
+          description: "ID компании из SellerService"
+          example: 123
+        addressId:
+          type: integer
+          format: int64
+          description: "ID адреса компании из SellerService"
+          example: 100
+        serviceId:
+          type: integer
+          format: int64
+          description: "ID услуги из SellerService"
+          example: 456
+        carId:
+          type: integer
+          format: int64
+          description: "ID автомобиля из UserService"
+          example: 789
+        bookingDate:
+          type: string
+          format: date
+          description: "Дата бронирования"
+          example: "2025-10-15"
+        startTime:
+          type: string
+          pattern: '^([0-1][0-9]|2[0-3]):[0-5][0-9]$'
+          description: "Время начала"
+          example: "10:00"
+        durationMinutes:
+          type: integer
+          description: |
+            Длительность услуги в минутах (30, 60, 90, 120 и т.д.).
+            Берётся из company_slots_config таблицы (slot_duration_minutes).
+            endTime вычисляется в приложении: endTime = startTime + durationMinutes
+          example: 60
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/BookingStatus'
+        serviceName:
+          type: string
+          description: "Название услуги (денормализовано для истории)"
+          example: "Комплексная мойка"
+        servicePrice:
+          type: number
+          format: double
+          description: "Цена услуги (денормализовано для истории)"
+          example: 1500.00
+        carBrand:
+          type: string
+          nullable: true
+          description: "Марка автомобиля (денормализовано)"
+          example: "BMW"
+        carModel:
+          type: string
+          nullable: true
+          description: "Модель автомобиля (денормализовано)"
+          example: "X5"
+        carLicensePlate:
+          type: string
+          nullable: true
+          description: "Госномер автомобиля (денормализовано)"
+          example: "А123БВ799"
+        notes:
+          type: string
+          nullable: true
+          description: "Заметки от клиента"
+          example: "Пожалуйста, уделите внимание дискам"
+        cancellationReason:
+          type: string
+          nullable: true
+          description: "Причина отмены"
+          example: "Изменились планы"
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: "Время отмены"
+          readOnly: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    BookingStatus:
+      type: string
+      enum:
+        - pending
+        - confirmed
+        - in_progress
+        - completed
+        - cancelled_by_user
+        - cancelled_by_company
+        - no_show
+      description: |
+        Статус бронирования:
+        - `pending` - ожидает подтверждения
+        - `confirmed` - подтверждена
+        - `in_progress` - в процессе выполнения
+        - `completed` - выполнена
+        - `cancelled_by_user` - отменена пользователем
+        - `cancelled_by_company` - отменена компанией
+        - `no_show` - клиент не явился
+      example: confirmed
+
+    AvailableSlot:
+      type: object
+      required:
+        - startTime
+        - durationMinutes
+        - availableSpots
+        - totalSpots
+      properties:
+        startTime:
+          type: string
+          pattern: '^([0-1][0-9]|2[0-3]):[0-5][0-9]$'
+          description: "Время начала слота"
+          example: "10:00"
+        durationMinutes:
+          type: integer
+          description: |
+            Длительность слота в минутах (берётся из slot_duration_minutes в конфигурации).
+            endTime вычисляется на клиенте: endTime = startTime + durationMinutes
+          example: 30
+        availableSpots:
+          type: integer
+          minimum: 0
+          description: "Количество свободных мест (боксов)"
+          example: 2
+        totalSpots:
+          type: integer
+          minimum: 1
+          description: "Общее количество мест (боксов)"
+          example: 4
+
+    CompanyConfig:
+      type: object
+      required:
+        - id
+        - companyId
+        - slotDurationMinutes
+        - maxConcurrentBookings
+        - advanceBookingDays
+        - minBookingNoticeMinutes
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+          readOnly: true
+        companyId:
+          type: integer
+          format: int64
+          description: "ID компании"
+          example: 123
+        addressId:
+          type: integer
+          format: int64
+          nullable: true
+          description: "ID адреса (NULL = настройка для всех адресов компании)"
+          example: 100
+        serviceId:
+          type: integer
+          format: int64
+          nullable: true
+          description: "ID услуги (NULL = настройка для всех услуг)"
+          example: 456
+        slotDurationMinutes:
+          type: integer
+          minimum: 5
+          description: "Шаг временных слотов в минутах (обычно 30)"
+          example: 30
+          default: 30
+        maxConcurrentBookings:
+          type: integer
+          minimum: 1
+          description: "Максимальное количество одновременных бронирований (количество боксов)"
+          example: 4
+          default: 1
+        advanceBookingDays:
+          type: integer
+          minimum: 0
+          description: |
+            Ограничение на бронирование в будущем (в днях).
+            0 = без ограничений (можно бронировать на любую дату)
+          example: 30
+          default: 0
+        minBookingNoticeMinutes:
+          type: integer
+          minimum: 0
+          description: "Минимальное время до записи в минутах (например, нельзя записаться менее чем за час)"
+          example: 60
+          default: 60
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    # ------------------------------------------------------------
+    # REQUEST MODELS
+    # ------------------------------------------------------------
+
+    CreateBookingRequest:
+      type: object
+      required:
+        - userId
+        - companyId
+        - addressId
+        - serviceId
+        - bookingDate
+        - startTime
+      properties:
+        userId:
+          type: integer
+          format: int64
+          description: "Telegram ID пользователя"
+          example: 987654321
+        companyId:
+          type: integer
+          format: int64
+          description: "ID компании"
+          example: 123
+        addressId:
+          type: integer
+          format: int64
+          description: "ID адреса компании (должен быть в списке адресов, где доступна услуга)"
+          example: 100
+        serviceId:
+          type: integer
+          format: int64
+          description: "ID услуги"
+          example: 456
+        bookingDate:
+          type: string
+          format: date
+          description: "Дата бронирования"
+          example: "2025-10-15"
+        startTime:
+          type: string
+          pattern: '^([0-1][0-9]|2[0-3]):[0-5][0-9]$'
+          description: "Время начала"
+          example: "10:00"
+        notes:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: "Заметки от клиента"
+          example: "Пожалуйста, уделите внимание дискам"
+
+    CancelBookingRequest:
+      type: object
+      required:
+        - userId
+      properties:
+        userId:
+          type: integer
+          format: int64
+          description: "Telegram ID пользователя"
+          example: 987654321
+        cancellationReason:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: "Причина отмены"
+          example: "Изменились планы"
+
+    UpdateCompanyConfigRequest:
+      type: object
+      required:
+        - userId
+      properties:
+        userId:
+          type: integer
+          format: int64
+          description: "Telegram ID пользователя (для проверки прав менеджера)"
+          example: 987654321
+        addressId:
+          type: integer
+          format: int64
+          nullable: true
+          description: "ID адреса для конфигурации (опционально, NULL = глобальная настройка компании)"
+          example: 100
+        serviceId:
+          type: integer
+          format: int64
+          nullable: true
+          description: "ID услуги для конфигурации (опционально, NULL = настройка для всех услуг)"
+          example: 456
+        slotDurationMinutes:
+          type: integer
+          minimum: 5
+          description: "Шаг временных слотов в минутах"
+          example: 30
+        maxConcurrentBookings:
+          type: integer
+          minimum: 1
+          description: "Максимальное количество одновременных бронирований"
+          example: 4
+        advanceBookingDays:
+          type: integer
+          minimum: 0
+          description: "Ограничение на бронирование в будущем (0 = без ограничений)"
+          example: 30
+        minBookingNoticeMinutes:
+          type: integer
+          minimum: 0
+          description: "Минимальное время до записи в минутах"
+          example: 60
+
+    # ------------------------------------------------------------
+    # RESPONSE MODELS
+    # ------------------------------------------------------------
+
+    AvailableSlotsResponse:
+      type: object
+      required:
+        - date
+        - companyId
+        - addressId
+        - serviceId
+        - slots
+      properties:
+        date:
+          type: string
+          format: date
+          description: "Дата, для которой запрошены слоты"
+          example: "2025-10-15"
+        companyId:
+          type: integer
+          format: int64
+          example: 123
+        addressId:
+          type: integer
+          format: int64
+          description: "ID адреса компании"
+          example: 100
+        serviceId:
+          type: integer
+          format: int64
+          example: 456
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableSlot'
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          example: "Invalid request data"
+        details:
+          type: object
+          additionalProperties: true
+          nullable: true

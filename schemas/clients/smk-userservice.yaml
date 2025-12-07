@@ -1,0 +1,91 @@
+openapi: 3.1.0
+info:
+  title: "UserService API (Client for NotificationService)"
+  description: "Клиентская схема для интеграции NotificationService с UserService. Содержит только необходимые endpoints для валидации пользователей."
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8080
+    description: Local Development
+  - url: http://userservice:8080
+    description: Docker Environment
+
+paths:
+  /internal/users/{tg_user_id}:
+    get:
+      tags: [Internal]
+      summary: "Получение пользователя по Telegram ID (межсервисное взаимодействие)"
+      description: "Endpoint для получения данных пользователя другими сервисами по его Telegram user ID. Используется для валидации существования пользователя перед отправкой уведомления."
+      parameters:
+        - name: tg_user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+          description: "Telegram user ID пользователя."
+          example: 123456789
+      responses:
+        '200':
+          description: "Успешный ответ с данными пользователя."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: "Некорректный формат user ID."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: "Пользователь не найден."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        tg_user_id:
+          type: integer
+          format: int64
+          description: "Уникальный числовой ID пользователя в Telegram."
+          example: 123456789
+        name:
+          type: string
+          description: "Имя пользователя."
+          example: "Иван"
+        phone_number:
+          type: string
+          description: "Номер телефона в формате E.164."
+          example: "+79991234567"
+        tg_link:
+          type: string
+          nullable: true
+          description: "Ссылка на профиль в Telegram (username)."
+          example: "@m0sHe4kA"
+        role:
+          type: string
+          enum: [client, manager, superuser]
+          description: "Роль пользователя в системе."
+          example: "client"
+        created_at:
+          type: string
+          format: date-time
+          description: "Время создания пользователя."
+          readOnly: true
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: "Код ошибки."
+          example: 400
+        message:
+          type: string
+          description: "Описание ошибки."
+          example: "Validation failed."

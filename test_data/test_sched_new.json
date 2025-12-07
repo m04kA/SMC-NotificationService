@@ -1,0 +1,6 @@
+{
+  "telegram_user_id": 764461859,
+  "message_text": "УРА! Это работающее отложенное уведомление через scheduler!",
+  "type": "promo",
+  "scheduled_for": "2025-12-07T14:26:00Z"
+}
