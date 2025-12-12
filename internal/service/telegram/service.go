@@ -112,9 +112,16 @@ func (s *Service) sendMediaGroup(msg *domain.TelegramMessage) error {
 	}
 
 	mediaGroupConfig := tgbotapi.NewMediaGroup(msg.ChatID, mediaGroup)
-	_, err := s.bot.Send(mediaGroupConfig)
+
+	// Используем Request вместо Send, так как MediaGroup возвращает массив сообщений
+	resp, err := s.bot.Request(mediaGroupConfig)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrSendMediaGroup, err)
+	}
+
+	// Проверяем успешность отправки
+	if !resp.Ok {
+		return fmt.Errorf("%w: telegram API error: %s", ErrSendMediaGroup, resp.Description)
 	}
 
 	// Если есть кнопки - отправляем отдельным сообщением
@@ -149,21 +156,66 @@ func (s *Service) buildInlineKeyboard(buttons []domain.InlineButton) tgbotapi.In
 }
 
 // SendWelcomeMessage отправляет приветственное сообщение при команде /start
-func (s *Service) SendWelcomeMessage(chatID int64) error {
-	msg := tgbotapi.NewMessage(chatID, templates.WelcomeMessageText)
+// Отправляет медиагруппу из 3 изображений с текстом и кнопку в отдельном сообщении
+// tgUserID опционален - если передан nil, используется дефолтный URL без параметра
+func (s *Service) SendWelcomeMessage(chatID int64, tgUserID *int64) error {
+	// Пути к изображениям в правильном порядке
+	imageFiles := []string{
+		"./static/welcome/Step1.PNG",
+		"./static/welcome/Step2.PNG",
+		"./static/welcome/Step3.PNG",
+		"./static/welcome/Step4.PNG",
+		"./static/welcome/Step5.PNG",
+	}
 
-	// Добавляем WebApp кнопку для открытия приложения внутри Telegram
-	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+	// Создаем медиагруппу
+	var mediaGroup []interface{}
+
+	// Первое изображение с текстом приветствия
+	firstPhoto := tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(imageFiles[0]))
+	firstPhoto.Caption = templates.WelcomeMessageText
+	mediaGroup = append(mediaGroup, firstPhoto)
+
+	// Остальные изображения без текста
+	for i := 1; i < len(imageFiles); i++ {
+		photo := tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(imageFiles[i]))
+		mediaGroup = append(mediaGroup, photo)
+	}
+
+	// Отправляем медиагруппу
+	mediaGroupConfig := tgbotapi.NewMediaGroup(chatID, mediaGroup)
+
+	// Используем Request вместо Send, так как MediaGroup возвращает массив сообщений
+	resp, err := s.bot.Request(mediaGroupConfig)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrSendMediaGroup, err)
+	}
+
+	// Проверяем успешность отправки
+	if !resp.Ok {
+		return fmt.Errorf("%w: telegram API error: %s", ErrSendMediaGroup, resp.Description)
+	}
+
+	// Формируем URL кнопки
+	buttonURL := templates.WelcomeButtonBaseURL
+	if tgUserID != nil {
+		buttonURL = templates.GetWelcomeButtonURL(*tgUserID)
+	}
+
+	// Отправляем кнопку отдельным сообщением (Telegram не поддерживает inline-кнопки в MediaGroup)
+	buttonMsg := tgbotapi.NewMessage(chatID, "Нажмите на кнопку ниже, чтобы открыть приложение:")
+	buttonMsg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonWebApp(templates.WelcomeButtonText, tgbotapi.WebAppInfo{
-				URL: templates.WelcomeButtonURL,
+				URL: buttonURL,
 			}),
 		),
 	)
 
-	_, err := s.bot.Send(msg)
+	_, err = s.bot.Send(buttonMsg)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSendMessage, err)
+		// Медиагруппа уже отправлена, ошибка кнопки не критична
+		return fmt.Errorf("%w: media group sent but button failed: %v", ErrSendMessage, err)
 	}
 
 	return nil

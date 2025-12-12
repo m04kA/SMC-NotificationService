@@ -24,6 +24,9 @@ COPY --from=builder /app/main .
 # Copy config file
 COPY --from=builder /app/config.toml .
 
+# Copy static files (welcome images)
+COPY --from=builder /app/static ./static
+
 # Create logs directory
 RUN mkdir -p /app/logs
 

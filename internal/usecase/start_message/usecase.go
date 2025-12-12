@@ -31,14 +31,23 @@ func New(telegramService TelegramService, userServiceClient UserServiceClient) *
 // Execute выполняет обработку команды /start
 // Возвращает ошибку с полным контекстом для логирования на уровне выше
 func (uc *UseCase) Execute(ctx context.Context, from *tgbotapi.User, chatID int64) error {
-	// Отправляем приветственное сообщение сразу
-	if err := uc.telegramService.SendWelcomeMessage(chatID); err != nil {
+	// Определяем tgUserID (может быть nil если from == nil)
+	var tgUserID *int64
+	if from != nil {
+		userID := from.ID
+		tgUserID = &userID
+	}
+
+	// Отправляем приветственное сообщение сразу с tgUserID
+	if err := uc.telegramService.SendWelcomeMessage(chatID, tgUserID); err != nil {
 		return fmt.Errorf("usecase.SendStartMessage: send welcome message to chat %d: %w", chatID, err)
 	}
 
 	// Проверяем существование пользователя и создаём при необходимости
-	if err := uc.ensureUserExists(ctx, from); err != nil {
-		return fmt.Errorf("usecase.SendStartMessage: ensure user %d exists: %w", from.ID, err)
+	if from != nil {
+		if err := uc.ensureUserExists(ctx, from); err != nil {
+			return fmt.Errorf("usecase.SendStartMessage: ensure user %d exists: %w", from.ID, err)
+		}
 	}
 
 	return nil

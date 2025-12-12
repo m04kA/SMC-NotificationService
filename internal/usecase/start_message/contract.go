@@ -8,7 +8,7 @@ import (
 
 // TelegramService интерфейс для работы с Telegram Bot API
 type TelegramService interface {
-	SendWelcomeMessage(chatID int64) error
+	SendWelcomeMessage(chatID int64, tgUserID *int64) error
 }
 
 // UserServiceClient интерфейс для работы с UserService
